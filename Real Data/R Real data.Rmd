@@ -1,0 +1,542 @@
+---
+title: "R Real Data"
+date: "10/15/2021"
+output: html_document
+---
+
+```{r library(rdenv)}
+library(rdenv)
+```
+
+
+```{r read data from files}
+# Original data
+X<-read.table(file="X_ori_1.3.txt", header=T)
+Y<-read.table(file="Y_ori_1.3.txt", header=T)
+
+X<-as.matrix(X)
+Y<-as.matrix(Y)
+n<-nrow(X)
+p<-ncol(X)
+r<-ncol(Y)
+p
+r
+n
+```
+
+```{r Create data from data.frame after BC}
+X<-CHNS.bc[,c("BMI", "age", "CRE", "FET", "GLUCOSE", "MG")]
+Y<-CHNS.bc[, c("LDL_C", "HDL")]
+X<-as.matrix(X)
+Y<-as.matrix(Y)
+p<-ncol(X)
+r<-ncol(Y)
+n<-nrow(X)
+```
+
+```{ save or load workspace}
+#save(list=ls(all.names=TRUE), file="CHNS_Data_p6r2_1.3.RData")
+
+load("CHNS_Data.RData")
+```
+
+# Estimation
+
+```{ likelihood ratio test}
+resu_bic<-aicbic.IPE(X=X, Y=Y)
+resu_bic
+loglik.seq<-resu_bic$loglik.seq
+loglik.seq
+lrt.test<-pchisq(2*(loglik.seq[1]-loglik.seq[2:(r+1)]), (p-r)*(1:r), lower.tail=F)
+lrt.test
+alpha<-0.05
+if (any(lrt.test > alpha)) {
+  d.lrt <- which(lrt.test > alpha)[1]-1
+} else {
+  d.lrt <-0
+}
+d.lrt
+
+pchisq(2*14, 4)
+```
+
+
+```{r estimation}
+  SX<-stats::cov(X)*(n-1)/n
+  SXY<-stats::cov(X, Y)*(n-1)/n
+
+  # Dimension Selection
+  
+  ## Bootstrap
+  dime<-d.boot.sim(X=X, Y=Y, B=200, trace=0, estmrs=c("iPLS", "IPE"))
+  dime 
+  
+  ## BIC
+  aicbic.IPE(X=X, Y=Y)
+  
+  ## CV
+  u.cv.sim(X=X, Y=Y, kfold=5, trace=1)
+#  u.cv.SIMPLS(X=X, Y=Y, kfold=5, trace=1)
+#  u.cv.PredEnv(X=X, Y=Y, kfold=5, trace=1)
+  resu_cv_SIMPLS<-sapply(X=1:100, FUN=function(x) u.cv.SIMPLS(X=X, Y=Y, kfold=3, trace=-1)$u.cv.SIMPLS)
+  u.SIMPLS.cv<-round(mean(resu_cv_SIMPLS))
+  u.SIMPLS.cv
+  resu_cv_xenv<-sapply(X=1:100, FUN=function(x) u.cv.PredEnv(X=X, Y=Y, kfold=3, trace=-1)$u.cv.PredEnv)
+  u.predenv.cv<-round(mean(resu_cv_xenv))
+  u.predenv.cv
+  
+  # innerPLS
+
+  d.inp<-dime$d.boot.iPLS
+ 
+  resu.inp<-innerPLS(X=X, Y=Y, d=d.inp)
+  Gam1.inp<-resu.inp$Gamma1
+  Gam0.inp<-resu.inp$Gamma0
+   
+  Omeo.inp<-crossprod(Gam1.inp, SX%*%Gam1.inp)
+  Omez.inp<-crossprod(Gam0.inp, SX%*%Gam0.inp)
+  Omeo.inp
+  eigen(Omez.inp)$values
+  #resu.inp$betainp
+  
+  # IPE
+  d.IPE<-dime$d.boot.IPE
+  mle<-IPE(X=X, Y=Y, d=d.IPE, NonGrass=F)
+
+  Gam1.sv<-mle$Gamma1
+  Gam0.sv<-qr.Q(qr(Gam1.sv), complete=T)[,(d.IPE+1):p,drop=F]
+  Omeo.sv<-crossprod(Gam1.sv, SX%*%Gam1.sv)
+  Omez.sv<-crossprod(Gam0.sv, SX%*%Gam0.sv)
+#  Omeo.sv
+#  eigen(Omez.sv)$values
+  #mle$betaIPE
+
+  # Predictor Envelope
+  dim.predenv<-Renvlp::u.xenv(X=X, Y=Y)
+  dim.predenv
+  enve_pred<-Renvlp::xenv(X=X, Y=Y, u=dim.predenv$u.bic, asy=T)
+  beta.predenv<-enve_pred$beta
+  Gam1.predenv<-enve_pred$Gamma
+  Gam0.predenv<-enve_pred$Gamma0
+  Omeo.predenv<-crossprod(Gam1.predenv, SX%*%Gam1.predenv)
+#  Omez.predenv<-crossprod(Gam0.predenv, SX%*%Gam0.predenv)
+  eigen(Omeo.predenv)$values
+#  eigen(Omez.predenv)$values
+  #beta.predenv
+  
+#  cor(X%*%Pr(beta.predenv), X%*%(diag(p)-Pr(beta.predenv)))
+  
+  # dim by cv
+  enve_pred2<-Renvlp::xenv(X=X, Y=Y, u=u.predenv.cv, asy=T)
+  beta.predenv2<-enve_pred2$beta
+  #beta.predenv2
+  
+  # SIMPLS
+  Gam.pls<-SIMPLS_gamma(M=SX, U=tcrossprod(SXY), u=p)$Gammahat
+  beta.PLS<-Gam.pls%*%chol2inv(chol(t(Gam.pls)%*%SX%*%Gam.pls))%*%t(Gam.pls)%*%SXY
+  #beta.PLS
+```
+
+# Variable Selection and Transformation
+
+```{r BoxCox to find lambda}
+predr_nm
+rspr_nm
+CHNS<-data.frame(X, Y)
+for (i in 1:length(predr_nm)) {
+  MASS::boxcox(CHNS[,predr_nm[i]]~1)
+}
+MASS::boxcox(CHNS[,predr_nm[9]]~1)
+
+for (i in 1:length(rspr_nm)) {
+  MASS::boxcox(CHNS[,rspr_nm[i]]~1)
+}
+
+## Results
+# 1; 1; 0; -1/2; 0; -2; 0; 1/2; 1; 0; 0; -2
+nm_0<-c("ALB", "FET", "INS", "UA", "Y48_6")
+nm_.5<-c("MG")
+nm_n.5<-c("CRE")
+nm_n2<-c("GLUCOSE", "Y50")
+```
+
+```{r transformation by bc}
+nm_0<-c("FET")
+nm_.5<-c("MG")
+nm_n.5<-c("CRE")
+nm_n2<-c("GLUCOSE")
+
+CHNS<-data.frame(X, Y)
+CHNS.bc<-CHNS
+
+# Predictor
+for (i in nm_0) {
+  CHNS.bc[,nm_0]<-log(CHNS[,nm_0])
+}
+for (i in nm_.5) {
+  CHNS.bc[,nm_.5]<-CHNS[,nm_.5]^(1/2)
+}
+for (i in nm_n.5) {
+  CHNS.bc[,nm_n.5]<-CHNS[,nm_n.5]^(-1/2)
+}
+for (i in nm_n2) {
+  CHNS.bc[,nm_n2]<-CHNS[,nm_n2]^(-2)
+}
+
+# Response
+#CHNS.bc$LDL_C<-CHNS$LDL_C^(1/2)
+CHNS.bc$HDL<-log(CHNS$HDL)
+```
+
+
+```{r delete/select columns}
+#X_base<-X
+colnames(X)
+X<-X_base[,!colnames(X_base)%in%c("Y48_6", "UA", "ALB", "INS", "Y50", "TRF")]
+n<-nrow(X)
+p<-ncol(X)
+r<-ncol(Y)
+p
+r
+
+X<-CHNS.bc[,c("BMI", "age", "CRE", "FET", "GLUCOSE", "MG")]
+p<-ncol(X)
+p
+
+aicbic.IPE(X=X, Y=Y)
+```
+
+
+```{ fomer BoxCox to find lambda}
+predr_nm
+#rspr_nm
+CHNS<-data.frame(X, Y)
+for (i in 1:length(predr_nm)) {
+  MASS::boxcox(CHNS[,predr_nm[i]]~1)
+}
+
+MASS::boxcox(BMI~1, data=CHNS) # 1
+MASS::boxcox(age~1, data=CHNS) # 1
+#MASS::boxcox(Y50~1, data=CHNS) # -2
+MASS::boxcox(FET~1, data=CHNS) # 0
+#MASS::boxcox(Y46_1~1, data=CHNS) # 1
+MASS::boxcox(TRF~1, data=CHNS) # 1
+#MASS::boxcox(Y48_1~1, data=CHNS) # -1
+MASS::boxcox(INS~1, data=CHNS) # 0
+MASS::boxcox(Y48_6~1, data=CHNS) # 0
+#MASS::boxcox(HS_CRP~1, data=CHNS)
+#MASS::boxcox(GLUCOSE~1, data=CHNS)  # -2
+
+MASS::boxcox(LDL_C~1, data=CHNS) # 1/2; But in former practice no transformation
+MASS::boxcox(HDL~1, data=CHNS)  # 0
+```
+
+```{ former transformation by bc}
+CHNS<-data.frame(X, Y)
+CHNS.bc<-CHNS
+#CHNS.bc$Y50<-CHNS$Y50^(-2)
+CHNS.bc$FET<-log(CHNS$FET)
+#CHNS.bc$Y48_1<-CHNS$Y48_1^(-1)
+CHNS.bc$INS<-log(CHNS$INS)
+CHNS.bc$Y48_6<-log(CHNS$Y48_6)
+#CHNS.bc$GLUCOSE<-CHNS$GLUCOSE^(-2)
+
+CHNS.bc$LDL_C<-CHNS$LDL_C^(1/2)
+CHNS.bc$HDL<-log(CHNS$HDL)
+```
+
+
+
+# Compare Variance
+
+```{r BOOTSTRAP to calculate variance of inp IPE predenv PLS}
+# CV dimension for predenv&SIMPLS
+#dim.predenv$u.bic
+resu.bt<-boot_dat(X=X, Y=Y, d=dime$d.boot.iPLS, u=p, u.PLS=p, B=800, NonGrass=F, ftol.nonG=0.1, PRINT=T)
+
+# Bootstrap dimension for predenv
+#dime$u.boot.predenv
+#resu.bt2<-boot_dat(X=X, Y=Y, d=dime$d.boot.inp, u=dime$u.boot.predenv, u.PLS=dime$u.boot.PLS, B=600, NonGrass=F, ftol.nonG=0.1, PRINT=T)
+```
+
+```{r Print beta and se}
+resu.inp$betaiPLS
+mle$betaIPE
+#beta.predenv
+#beta.predenv2
+beta.PLS
+
+resu.bt$bootse.inp
+resu.bt$bootpval.inp
+resu.bt$bootse.IPE
+resu.bt$bootpval.IPE
+resu.bt$bootse.predenv
+resu.bt$bootpval.predenv
+resu.bt$bootse.PLS
+resu.bt$bootpval.PLS
+
+#resu.bt2$bootse.predenv
+#resu.bt2$bootpval.predenv
+```
+
+```{r ratio predenv with BIC dimension}
+# predenv: u=dime$u.boot.predenv
+# predenv/inp
+#ratio1<-resu.bt$bootse.predenv/resu.bt$bootse.inp
+#ratio1
+#summary(c(ratio1))
+# predenv/IPE
+#ratio2<-resu.bt$bootse.predenv/resu.bt$bootse.IPE
+#ratio2
+#summary(c(ratio2))
+
+# PLS/inp
+#ratio3<-resu.bt$bootse.PLS/resu.bt$bootse.inp
+ratio3<-(resu.bt$bootse.PLS^2)/(resu.bt$bootse.inp^2)
+ratio3
+summary(c(ratio3))
+
+# PLS/IPE
+#ratio4<-resu.bt$bootse.PLS/resu.bt$bootse.IPE
+ratio4<-(resu.bt$bootse.PLS^2)/(resu.bt$bootse.IPE^2)
+ratio4
+summary(c(ratio4))
+
+# PLS/predenv
+#ratio5<-resu.bt$bootse.PLS/resu.bt$bootse.predenv
+#ratio5<-(resu.bt$bootse.PLS^2)/(resu.bt$bootse.predenv^2)
+#ratio5
+#summary(c(ratio5))
+```
+
+```{ ratio predenv with bootstrap dimension}
+# predenv/inp
+#ratio5<-resu.bt2$bootse.predenv/resu.bt$bootse.inp
+#ratio5
+#summary(c(ratio5))
+
+# predenv/IPE
+#ratio6<-resu.bt2$bootse.predenv/resu.bt$bootse.IPE
+#ratio6
+#summary(c(ratio6))
+
+# PLS/predenv
+#ratio7<-resu.bt$bootse.PLS/resu.bt2$bootse.predenv
+ratio7<-(resu.bt$bootse.PLS^2)/(resu.bt2$bootse.predenv^2)
+ratio7
+summary(c(ratio7))
+```
+
+```{r calculate the sample needed to reduce variance in standard analysis}
+# Use mean
+1/1.3684
+1/2.660
+
+## OBSOLETE BELOW
+# Use mean
+1/1.713
+1/5.523
+1/12.534
+
+# Use median
+1/1.09
+1/1.261
+1/2.031
+```
+
+# Compare Prediction Performance
+
+```{r cv for prediction performance}
+prederr.cv.sim(X=X, Y=Y, d.inp=1, d.IPE=1, u.predenv=6, u.PLS=6, kfold=5, nperm=50, PRINT=T)
+```
+
+
+```{ explore the dimension selection of PLS}
+rep.num<-100; fld=10
+
+resu.dim<-replicate(rep.num, u.cv.PLS(X, Y, kfold=fld, PRINT=T)$u.cv)
+resu.dim
+mean(resu.dim)
+```
+
+# Processing Data to Find Good Variables
+
+```{r reading and merging data original codes}
+library(sas7bdat)
+#library(xtable)
+
+# Read from files
+
+nutrition2_data=read.sas7bdat('./CHNS/Master_Nutrition_201410/nutr2_00.sas7bdat') # SLOW
+nutrition2_data_2009=nutrition2_data[nutrition2_data$WAVE==2009,]  # WVAE: survey year
+nutrition2_data_2009=nutrition2_data_2009[,which(names(nutrition2_data_2009)!=('WAVE'))]
+cor(nutrition2_data_2009[,c('V44','V45','V46')])
+
+# V44, V45, and V46 are the proportion of meals for breakfast, lunch, dinner. Only two will be used as they add up to 1.
+
+PE_data=read.sas7bdat('./CHNS/Master_PE_PA_201804/pexam_00.sas7bdat')  # SLOW
+PE_data_2009=PE_data[PE_data$WAVE==2009,]
+
+IndividualID_data=read.sas7bdat('./CHNS/Master_ID_201908/rst_12.sas7bdat') #SLOW
+IndividualID_data=IndividualID_data[,c('IDind','hhid','line','WAVE')]
+IndividualID_data_2009=IndividualID_data[IndividualID_data$WAVE==2009,]
+
+Biomarker=read.sas7bdat('./CHNS/Biomarker_2012Dec/c10biomarker.sas7bdat')
+Biomarker_09<-read.sas7bdat('./CHNS/biomarker_09/biomarker_09.sas7bdat')
+
+Wages_data=read.sas7bdat('./CHNS/Master_Income_Categories_201804/wages_12.sas7bdat')
+
+Age_data=read.sas7bdat('./CHNS/Master_ID_201908/mast_pub_12.sas7bdat')
+
+colnames(Biomarker)
+
+# Merge to one data set
+
+Biomarker_ID_data=merge(Biomarker, IndividualID_data_2009, by.x=c('HHID','LINE'), by.y=c('hhid','line'))
+length(unique(Biomarker_ID_data$IDind)) #9539
+Age_ID_data=merge(Age_data, IndividualID_data_2009, by.x=c('Idind'), by.y=c('IDind'))
+Age_ID_data$age=2009-Age_ID_data$WEST_DOB_Y #age at 2009
+Age_ID_data$age2=Age_ID_data$age^2
+
+names(Age_ID_data)[which(names(Age_ID_data)=='Idind')]='IDind'
+Biomarker_Age_ID_data=merge(Biomarker_ID_data, Age_ID_data, by='IDind')
+Biomarker_Age_PE_ID_data=merge(Biomarker_Age_ID_data, PE_data_2009, by='IDind')
+Biomarker_Age_PE_ID_nutrition2_data=merge(nutrition2_data_2009, Biomarker_Age_PE_ID_data, by='IDind')
+```
+
+
+```{r Pick Variables}
+load("CHNS/CHNS_Data.RData")
+
+mydata_original=Biomarker_Age_PE_ID_nutrition2_data
+
+mydata_original$BMI=mydata_original$WEIGHT/((mydata_original$HEIGHT/100)^2)
+
+
+# Data cleaning
+
+# What we need:
+## Y50: HbA1c
+## INS: insulin
+## Y46_1: Hemoglobin
+## Y48_6: triglyceride
+## HS_CRP: CRP(I don't know what this is)
+## Y48_1: glucose-field
+
+mydata_original$URE
+
+#predr_nm<-c("BMI", "age", "ALB", "CRE", "FET", "GLUCOSE", "INS", "MG", "TRF", "UA", "Y48_6", "Y50")
+predr_nm<-c("BMI", "age", "CRE", "FET", "GLUCOSE", "MG")
+rspr_nm<-c("LDL_C", "HDL")
+
+# p=6, work well but BIC is not good
+#predr_nm<-c('BMI','age', 'FET', 'TRF', "INS", "Y48_6")
+
+mydata_original_selected<-mydata_original[,c(predr_nm, rspr_nm)]
+
+idx<-complete.cases(mydata_original_selected)
+mydata=mydata_original_selected[idx,]
+
+
+idx_del.age<-which(mydata$age<1);  mydata<-mydata[-idx_del.age,] # One sample has age of 0.. Delete it
+
+dim(mydata)
+summary(mydata)
+
+# Use now directly
+X<-data.matrix(mydata[,predr_nm]) 
+Y<-data.matrix(mydata[,rspr_nm])
+```
+
+
+```{r Export data}
+X_data_original=data.matrix(mydata[,predr_nm]) 
+Y_data_original=data.matrix(mydata[,rspr_nm])
+
+write.table(x=X_data_original, file=paste0("X_ori_1.3.txt"), row.names=F, col.names=T, sep=" ")
+write.table(x=Y_data_original, file=paste0("Y_ori_1.3.txt"), row.names=F, col.names=T, sep=" ")
+```
+
+
+Obsolete Codes, which maybe useful for furture reference
+
+
+```{ normality test}
+ks.test(fit.OLS$residuals[,1], "pnorm")
+moments::agostino.test(fit.OLS$residuals[,1])
+ks.test(fit.OLS$residuals[,2], "pnorm")
+moments::agostino.test(fit.OLS$residuals[,2])
+
+nortest::ad.test(fit.OLS$residuals[,1])
+nortest::ad.test(fit.OLS$residuals[,2])
+
+#ks.test(res.predenv[,1], "pnorm")
+#moments::agostino.test(res.predenv[,1])
+
+# Marginal test
+for (i in 1:9) {
+  print(nortest::ad.test(CHNS.bc[,i]))
+}
+```
+
+
+```{ EnvStats}
+CHNS<-data.frame(X, Y)
+#CHNS<-CHNS[-7343,]
+
+EnvStats::boxcox(CHNS$BMI) # 1
+EnvStats::boxcox(CHNS[-which(CHNS$age==0),]$age) # By removing the obeservation of 0 value, the lambda yielded is 1.
+EnvStats::boxcox(CHNS$HbA1c) # -2
+EnvStats::boxcox(CHNS$FET) # 0
+EnvStats::boxcox(CHNS$Hemoglobin) # 1
+EnvStats::boxcox(CHNS$TRF) # 1
+EnvStats::boxcox(CHNS$Y48_1) # -2
+
+EnvStats::boxcox(CHNS$LDL_C) # 1/2
+EnvStats::boxcox(CHNS$HDL)  # 0
+```
+
+```{ Graphical method of diagnostics}
+## OLS
+plot(fit1.OLS, 2)
+plot(fit2.OLS, 2)
+
+## Predenv
+res.predenv<-Y-X%*%beta.predenv
+plot(res.predenv[,1])
+# qqplot
+qqnorm(res.predenv[,1]);qqline(res.predenv[,1], col=2)
+
+#plot(res.predenv[,2])
+
+
+#pdf(file="1.pdf", height=6, width=9)
+fit1.lm.predenv<-lm(Y[,1]~X%*%Gam1.predenv)
+plot(fit1.lm.predenv)
+#dev.off()
+#pdf(file="2.pdf", height=6, width=9)
+fit2.lm.predenv<-lm(Y[,2]~X%*%Gam1.predenv)
+plot(fit2.lm.predenv)
+#dev.off()
+
+summary(fit1.lm.predenv)
+summary(fit2.lm.predenv)
+```
+
+```{ Delete influential points now seems USELESS}
+# Based on OLS. I think this is more reliable to use.
+rownames(fit.OLS$residuals)<-NULL
+sort(abs(fit.OLS$residuals))[1:10]
+which(abs(fit.OLS$residuals[,1])>5)
+which(abs(fit.OLS$residuals[,2])>1.5)
+idx.inf<-c(which(abs(fit.OLS$residuals[,1])>5), which(abs(fit.OLS$residuals[,2])>1.5))
+CHNS.bc.uninf<-CHNS.bc[-idx.inf,]
+
+# Based on Predenv
+#which(abs(res.predenv[,1])>3)
+#which(abs(res.predenv[,2])>3)
+#idx.inf<-c(which(abs(res.predenv[,1])>3), which(abs(res.predenv[,2])>3))
+#Y.uninf<-Y[-idx.inf,]
+#X.uninf<-X[-idx.inf,]
+```
+
