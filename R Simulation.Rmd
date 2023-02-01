@@ -1,0 +1,360 @@
+---
+title: "R Simulation"
+author: "Hsg4"
+date: "5/21/2021"
+output: html_document
+---
+
+## Data: generate or read
+
+```{r rm list ls }
+rm(list=ls())
+library(rdenv)
+```
+
+
+```{r READ data}
+fdnm<-"d5r6p102021-12-16 19-46-19"
+dat<-data_READ(fdnm=fdnm)
+```
+
+```{r export data}
+data_save(dat=dat)
+```
+
+## Simulation
+
+```{r Less Estimators: Quick Simulation}
+# two
+resu_sim<-Run_Simulation(dat=dat, rep_num=20, estmrs=c("iPLS", "IPE"), dim.iPLS_IPE="bootstrap", dim.PredEnv="CV", dim.SIMPLS="CV", SELECT_DIM=T, err_type="Normal", coef_normal=0.2, upper.uniform=3, kfold=3, n=200)
+resu_sim[c("time_used", "mean_dimen", "mean_dis", "MSE")]
+
+# four
+#resu_sim<-Run_Simulation(dat=dat, rep_num=20, estmrs=c("iPLS", "IPE", "PredEnv", "SIMPLS"), dim.iPLS_IPE="bootstrap", dim.PredEnv="CV", dim.SIMPLS="CV", SELECT_DIM=T, err_type="normal", coef_normal=0.2, upper.uniform=5, kfold=3, n=500)
+#resu_sim
+```
+
+```{r Quick Boxplot}
+# 4 estimators
+dis_boxplot<-resu_sim$dis
+pdf(file=paste0("Normal", ".pdf"), height=6, width=9)
+boxplot(dis_boxplot, outline=F)
+dev.off()
+```
+
+
+```{r MAIN part: SIMULATION & Save results+boxplot}
+resu_sim<-Run_Simulation(dat=dat, rep_num=1000, estmrs=c("iPLS", "IPE", "PredEnv", "SIMPLS", "LASSO", "Ridge"), dim.iPLS_IPE="bootstrap", dim.PredEnv="CV", dim.SIMPLS="CV", SELECT_DIM=T, err_type="Uniform", coef_normal=0.2, upper.uniform=3, n=300, B=50, kfold=3, lambda_seq=seq(from=0, to=20, by=0.2))
+resu_sim[c("time_used", "mean_dimen", "mean_dis", "MSE")]
+
+
+names_boxplot<-c(expression(beta[OLS]), expression(beta[iPLS]), expression(beta[IPE]), expression(beta[Predenv]), expression(beta[SIMPLS]), expression(beta[Lasso]), expression(beta[Ridge]))
+results_save(result_Simulation=resu_sim, fdnm=fdnm, names=names_boxplot)
+```
+
+
+```{r read WRITTEN results}
+err_type<-"Uniform"
+sam_size<-300
+
+dis<-read.table(paste0(err_type, sam_size, ".txt"), header=T, sep="|")
+#dis<-read.table("Normal1000.txt", header=T, sep="|")
+```
+
+```{r bias variance & se}
+colMeans(dis)
+sqrt(diag(var(dis)))
+```
+
+
+```{r read written results and export new boxplot}
+err_type<-"Normal"
+sam_size<-300
+
+dis<-read.table(paste0(err_type, sam_size, ".txt"), header=T, sep="|")
+dis_bp<-dis[,c(2:7, 1)]
+
+pdf(file=paste0("Boxplot_", err_type, "_n", sam_size, ".pdf"), height=6, width=8)
+# Max Normal is 1.33451
+# Max Uniform is 1.17133. Use 1.1 吧
+ylim_max<-ifelse(err_type=="Normal", 1.3, 1.1)
+
+opar<-par(mar=c(5, 4, 4, 2)+0.1, mgp=c(2.5, 2.5, 0), lab=c(5, 5, 7), tcl=0.4, lheight=0.1)
+
+boxplot(dis_bp, outline=F, ylim=c(0, ylim_max), ylab="Bias", names=c(expression(hat(beta)[iPLS]), expression(hat(beta)[iPE]), expression(hat(beta)[PE]), expression(hat(beta)[PLS]), expression(hat(beta)[L]), expression(hat(beta)[R]), expression(hat(beta)[OLS])), cex.axis=2, cex.lab=2, lwd=2, las=1, yaxs="i", boxwex=0.7, yaxt="n")
+
+par(mgp=c(5, 0.5, 0))
+axis(side=2, cex.axis=2)
+
+par(opar)
+dev.off()
+```
+
+
+```{ Write the results}
+# SPECIFY BELOW
+err_type<-"normal"; rep.num=5
+
+##
+#Create or overwrite a folder named of the type of distribution
+
+estinm<-c("OLS", "iPLS", "IPE", "PredEnv", "SIMPLS", "LASSO", "Ridge")
+resu.num<-length(estinm)
+
+
+dis_write<-rbind(c(resu_sim$time_used[3], rep(NA, resu.num-1)), colMeans(resu_sim$dis), rep(NA, resu.num), resu_sim$dis, deparse.level=0)
+colnames(dis_write)<-estinm
+
+dimen_write<-rbind(colMeans(resu_sim$dimen), rep(NA, 4), resu_sim$dimen, deparse.level=1)
+
+work_dir0<-"Y:/Research/Data Generated and Results/IPE"
+work_dir1<-paste0(work_dir0, "/", fdnm)
+setwd(work_dir1)
+
+tpnm<-paste0(err_type, " ", substr(Sys.time(), 6, 10))
+dir.create(tpnm)
+work_dir2<-paste0(work_dir1, "/", tpnm)
+setwd(work_dir2)
+time_now<-gsub(":", "-", Sys.time())
+
+write.table(x=round(dis_write, digits=5), file=paste0("0 distance", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+
+write.table(x=round(t(resu_sim$MSE), digits=5), file=paste0("0 MSE", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+
+write.table(x=round(dimen_write, digits=5), file=paste0("0 dimension", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+
+write.table(x=round(resu_sim$dimen_dis.IPE, digits=5), file=paste0("1 SV dimension selection", " ", time_now, ".txt"), row.names=F, col.names=as.character(1:nrow(dat$SiYvX)), sep=" | ")
+
+write.table(x=round(resu_sim$dimen_dis.iPLS, digits=5), file=paste0("1 inp dimension selection", " ", time_now, ".txt"), row.names=F, col.names=as.character(1:nrow(dat$SiYvX)), sep=" | ")
+
+#write.table(x=round(dimen.PLS, digits=5), file=paste0("1 PLS dimension selection", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+
+#write.table(x=round(dimen.predenv, digits=5), file=paste0("1 predenv dimension selection", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+
+#write.table(x=round(diagonal, digits=8), file=paste0("0 diagonal", " ", time_now, ".txt"), row.names=F, col.names=T, sep=" | ")
+write.table(x=NULL, file=paste0("rep.num=", rep.num))
+#write.table(x=NULL, file=paste0("B=", B))
+#write.table(x=NULL, file=paste0("upper.uniform=", upper.uniform))
+```
+
+```{ Boxplot}
+##
+# Name of the boxplot will be: folder name+full/part
+setwd(work_dir2)
+pdf(file=paste0(tpnm, "full.pdf"), height=6, width=9)
+dis_boxplot<-resu_sim$dis
+colnames(dis_boxplot)<-c("OLS", "innerPLS", "IPE", "Lasso", "Ridge", "PredEnv", "PLS")
+boxplot(dis_boxplot)
+dev.off()
+
+# Outline=F and set ylim
+setwd(work_dir2)
+pdf(file=paste0(tpnm, "no_outline_full.pdf"), height=6, width=9)
+boxplot(dis_boxplot, outline=F)
+dev.off()
+```
+
+
+
+```{ EXPORT any data found to be good}
+work_dir0<-"Y:/Research/Data Generated and Results/IPE"
+time_now<-gsub(":", "-", Sys.time())
+
+# Create a folder whose name composes the values used for each parameter. Notice that "dia" is followed by the first element used in dia.
+setwd(work_dir0)
+if(SC){
+  fdnm_exp<-paste0("d", d, "r", r, "p", p, "n", n, "coef.eta2", coef.eta2, " ", time_now, " ", "SC")
+} else {
+  fdnm_exp<-paste0("d", d, "r", r, "p", p, "n", n, "upper.eta", upper.eta, " ", time_now)
+}
+dir.create(fdnm_exp)
+work_dir1<-paste0(work_dir0, "/", fdnm_exp)
+setwd(work_dir1)
+
+# The parameters to export(to pass to Matlab).
+par=c("Gamma1", "Gamma0", "beta", "eta1", "eta2", "C", "eig.SiX", "eig.SiYvX")
+
+for (j in 1:length(par)) {
+    write.table(dat[[par[j]]], file=paste(par[j], ".txt", sep=""), row.names=F, col.names=F)
+}
+```
+
+```{ READ saved data}
+d=5; r=6; p=20; n=1000
+
+work_dir0<-"Y:/Research/Data Generated and Results/IPE"
+
+further<-"upper.eta10 2021-12-15 20-45-30"
+
+fdnm_exp<-paste0("d", d, "r", r, "p", p, "n", n, further)
+work_dir1<-paste0(work_dir0, "/", fdnm_exp)
+setwd(work_dir1)
+
+# The parameters to export(to pass to Matlab).
+#par=c("X", "Y", "Gamma1", "Gamma0", "Gamma0_sv", "B", "beta", "betaOLS", "M")
+par=c("Gamma1", "Gamma0", "C", "beta", "eta1", "eta2", "eig.SiX", "eig.SiYvX")
+
+dat<-list(NULL)
+for (j in 1:length(par)){
+  dat[[j]]<-as.matrix(read.table(file=paste0(par[j], ".txt"), check.names=F))
+  colnames(dat[[j]])<-NULL
+}
+names(dat)<-par
+
+# "Restore" SiX & SiYvX
+dat$Gamma<-cbind(dat$Gamma1, dat$Gamma0)
+dat$SiX<-sweep(dat$Gamma, MARGIN=2, dat$eig.SiX[1:p], "*")%*%t(dat$Gamma)
+A<-rsomat(r, r)
+dat$SiYvX<-sweep(A, MARGIN=2, dat$eig.SiYvX[1:r], "*")%*%t(A)
+```
+
+```{ MAIN part: SIMULATION}
+n<-1000; 
+#upper.uniform<-7
+PRINT=F; 
+ftol.nonG=0.5; rep.num<-20; 
+resu.num<-8; dimnum<-4
+B<-50
+
+dis<-matrix(NA, nrow=rep.num, ncol=resu.num)
+dimen<-matrix(NA, nrow=rep.num, ncol=dimnum)
+dimen.SV<-matrix(NA, nrow=rep.num, ncol=r)
+dimen.inp<-matrix(NA, nrow=rep.num, ncol=r)
+dimen.PLS<-matrix(NA, nrow=rep.num, ncol=p-1)
+dimen.predenv<-matrix(NA, nrow=rep.num, ncol=p-1)
+
+ptm<-proc.time()
+for (i in 1:rep.num) {
+  d<-ncol(dat$Gamma1)
+  p<-nrow(dat$Gamma1)
+  r<-nrow(dat$SiYvX) 
+  X<-MASS::mvrnorm(n, rep(0, p), dat$SiX)
+  
+  # Normal
+#  eps<-MASS::mvrnorm(n, rep(0, r), dat$SiYvX); err_type<-"Normal"
+  
+  # Student's t
+#  eps<-matrix(rt(n=n*r, df=6), nrow=n, ncol=r); err_type<-"t6"
+  
+  # U(0,?)
+#  eps<-matrix(runif(n=n*r, max=upper.uniform)-upper.uniform/2, nrow=n, ncol=r); err_type<-"Uniform"
+  
+  # Chi Square
+  eps<-matrix(rchisq(n=n*r, df=4)-4, nrow=n, ncol=r); err_type<-"Chisq"
+  
+  Y<-X%*%dat$beta+eps
+
+  # Sample Covariances
+  
+  SY<-stats::cov(Y)*(n-1)/n
+  SYX<-stats::cov(Y, X)*(n-1)/n
+  SXY<-t(SYX)
+  SX<-stats::cov(X)*(n-1)/n
+  invSX<-chol2inv(chol(SX))
+  invSY<-chol2inv(chol(SY))
+  betaOLS<-invSX%*%t(SYX)
+  
+  dis[i,1]<-norm(betaOLS-dat$beta, type="F")
+ 
+  # Dimension Selection
+  dime<-d.boot.sim(X=X, Y=Y, VERBOSE=F, B=B)
+  dimen.SV[i,]<-dime$dis.SV
+  dimen.inp[i,]<-dime$dis.inp
+  dimen.PLS[i,]<-dime$dis.PLS
+  dimen.predenv[i,]<-dime$dis.predenv
+    
+  # innerPLS
+
+  d.inp<-dime$d.boot.inp
+  dimen[i,1]<-d.inp
+ 
+  if(d.inp!=0){
+    Gam0.pls<-SIMPLS.env(M=SX, U=diag(p)-Pr(SXY), u=p-d.inp)$Gammahat
+    Gam1.pls<-qr.Q(qr(Gam0.pls), complete=T)[,(p-d.inp+1):p,drop=F]
+  }
+  
+  innerpls<-IPE(X=X, Y=Y, d=d.inp, initial=Gam1.pls, NonGrass=F) 
+  dis[i,2]<-norm(innerpls$MLE_otherpars$betaIPE-dat$beta, type="F")
+  
+  # MLE
+  
+  d.IPE<-dime$d.boot.SV
+  dimen[i,2]<-d.IPE
+  mle<-IPE(X=X, Y=Y, d=d.IPE, NonGrass=F)
+  
+  dis[i,3]<-norm(mle$MLE_otherpars$betaIPE-dat$beta, type="F")
+
+  # Non Grassmann
+  mle_NG<-IPE(X=X, Y=Y, d=d.IPE, NonGrass=T, ftol.nonG=ftol.nonG, PRINT=PRINT)
+  dis[i,4]<-norm(mle_NG$MLE_otherpars$betaIPE-dat$beta, type="F") 
+   
+  # Lasso
+  beta.lasso<-matrix(NA, nrow=p, ncol=r)
+  for (j in 1:r) {
+    cv.lasso<-cv.glmnet(x=X, y=Y[,j], alpha=1, intercept=F, thresh=1e-14, lambda=seq(from=0, to=20, by=0.2))
+#    beta.lasso[,j]<-as.vector(coef(cv.lasso, s="lambda.min"))[-1]
+    beta.lasso[,j]<-as.numeric(glmnet(x=X, y=Y[,j], lambda=cv.lasso$lambda.min, thresh=1e-14)$beta)  # Will this be slow?
+  }
+  
+  #--- TEST ---
+#  resu.glmnet<-glmnet(x=X, y=Y[,j], lambda=cv.lasso$lambda.min, thresh=1e-14)
+#  resu.glmnet$beta
+#  resu.glmnet$beta-betaOLS[,j]
+  #--- ---
+  dis[i,5]<-norm(beta.lasso-dat$beta, type="F") 
+   
+  # Ridge
+#  beta.ridge<-chol2inv(chol(SX.out*n+lambda*diag(p)))%*%SXY.out*n 
+  beta.ridge<-matrix(NA, nrow=p, ncol=r)
+  for (k in 1:r) {
+    cv.ridge<-cv.glmnet(x=X, y=Y[,k], alpha=0, lambda=seq(from=0, to=20, by=0.2))  # lambda is supplied
+#    cv.ridge<-cv.glmnet(x=X, y=Y[,k], alpha=0)
+    beta.ridge[,k]<-chol2inv(chol(SX*n+cv.ridge$lambda.min*diag(p)))%*%SXY[,k]*n
+  }
+  dis[i,6]<-norm(beta.ridge-dat$beta, type="F") 
+  
+  # Predictor Envelope
+#  resu.predenv<-Renvlp::u.xenv(X=X, Y=Y)
+#  u.predenv<-resu.predenv$u.aic
+  u.predenv<-dime$u.boot.predenv
+  dimen[i,3]<-u.predenv
+  enve_pred<-Renvlp::xenv(X=X, Y=Y, u=u.predenv, asy=F)
+  dis[i,7]<-norm(enve_pred$beta-dat$beta, type="F") 
+  
+  # PLS
+  u.PLS<-dime$u.boot.PLS
+  dimen[i,4]<-u.PLS
+  Gam.pls<-SIMPLS.env(M=SX, U=tcrossprod(SXY), u=u.PLS)$Gammahat
+  beta.PLS<-Gam.pls%*%chol2inv(chol(t(Gam.pls)%*%SX%*%Gam.pls))%*%t(Gam.pls)%*%SXY
+  dis[i,8]<-norm(beta.PLS-dat$beta, type="F")
+
+  cat("-")
+}
+
+time_used<-proc.time()-ptm
+time_used
+
+estinm<-c("OLS", "innerPLS", "SV", "MLE", "LASSO", "Ridge", "PredEnv", "PLS")
+colnames(dis)<-estinm
+colnames(dimen)<-c("innerPLS", "IPE", "Predenv", "PLS")
+colnames(dimen.SV)<-1:r
+colnames(dimen.inp)<-1:r
+colnames(dimen.PLS)<-1:(p-1)
+colnames(dimen.predenv)<-1:(p-1)
+
+colMeans(dis)
+colMeans(dimen)
+colMeans(dimen.SV)
+colMeans(dimen.inp)
+colMeans(dimen.PLS)
+colMeans(dimen.predenv)
+
+mse<-matrix(NA, ncol=resu.num, nrow=1)
+for (k in 1:resu.num) {
+  mse[1,k]<-sum(dis[,k]^2)/rep.num
+}
+colnames(mse)<-estinm
+mse
+
+cat(err_type)
+```
